@@ -18,7 +18,8 @@ public final class Main {
 
     List<ColoringAlgorithm> algorithms = List.of(
         new TrivialColoring(),
-        new LfColoring()
+        new LfColoring(),
+        new DsaturColoring()
     );
 
     List<Path> files;
