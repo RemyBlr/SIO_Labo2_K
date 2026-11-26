@@ -9,22 +9,36 @@ import java.awt.*;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Stream;
 
 public final class Main {
 
+  // Nbr d'exécutions avant la mesure du temps
   private static final int WARMUP = 5;
+  // Nbr de répétitions d'exécution, on en fait la moyenne
   private static final int REPETITIONS = 20;
+  // Pour éviter que le compilateur optimise le code et élimines les mesures si non utilisées
+  private static volatile int totalColors;
 
   public static void main(String[] args) throws IOException {
     Path dataDir = Path.of(args.length > 0 ? args[0] : "data");
 
+    ColoringAlgorithm lf = new LfColoring();
+    ColoringAlgorithm dsatur = new DsaturColoring();
+
     List<ColoringAlgorithm> algorithms = List.of(
-        new TrivialColoring(),
-        new LfColoring(),
-        new DsaturColoring()
+        // pas besoin pour l'analyse
+        // new TrivialColoring(),
+        lf,
+        dsatur
     );
+
+    // lignes du tableau
+    List<String> rows = new ArrayList<>();
 
     List<Path> files;
     try (Stream<Path> stream = Files.list(dataDir)) {
@@ -41,15 +55,69 @@ public final class Main {
       }
       System.out.println(file.getFileName() + " " + graph);
 
+      Map<ColoringAlgorithm, Integer> colorCounts = new HashMap<>();
+      Map<ColoringAlgorithm, Double> times = new HashMap<>();
+
       for(ColoringAlgorithm algorithm : algorithms) {
         double micros = averageTimeInMicros(algorithm, graph);
+        // Séparer la coloration du temps pour l'analyse
         Coloring coloring = algorithm.color(graph);
+        colorCounts.put(algorithm, coloring.colorCount());
+        times.put(algorithm, micros);
 
         System.out.printf("  %-16s %5d couleurs  %10.1f µs  %s%n",
                 algorithm.name(), coloring.colorCount(), micros,
                 coloring.isProperFor(graph) ? "OK" : "INVALIDE");
       }
+
+      // Format du nom de fichier
+      String fileName = file.getFileName().toString();
+      String instance = fileName.substring(0, fileName.length() - ".txt".length());
+      // Ajoute la ligne du tableau pour cette instance
+      rows.add(tableRow(instance, graph,
+              colorCounts.get(lf), colorCounts.get(dsatur),
+              times.get(lf), times.get(dsatur)));
     }
+
+    System.out.println();
+    System.out.printf("Temps: moyenne sur %d répétitions après %d exécutions d'échauffement%n%n", REPETITIONS, WARMUP);
+    System.out.println("| Instance | n | m | Δ | D | Couleurs LF | Couleurs DSATUR | Gain DSATUR sur LF | Temps LF en µs | Temps DSATUR en µs | Augmentation entre DSATUR et LF |");
+    System.out.println("|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|");
+    rows.forEach(System.out::println);
+  }
+
+  /**
+   * Construit une ligne du tableau au format markdown pour chaque instance
+   *
+   * @param instance nom de l'instance
+   * @param graph le graphe de l'instance
+   * @param lfColors nombre de couleurs utilisées par LF
+   * @param dsaturColors nombre de couleurs utilisées par DSATUR
+   * @param lfMicros temps moyen de LF, en µs
+   * @param dsaturMicros temps moyen de DSATUR, en µs
+   * @return la ligne du tableau, au format markdown
+   */
+  private static String tableRow(String instance,
+                                 Graph graph,
+                                 int lfColors,
+                                 int dsaturColors,
+                                 double lfMicros,
+                                 double dsaturMicros) {
+
+    int n = graph.vertexCount();
+    long m = graph.edgeCount();
+    // Densité D du graphe
+    double density = n == 1 ? 0.0 : (2.0 * m) / (double) (n * (n - 1));
+    // Gain relatif des couleurs de DSATUR sur LF
+    // lf - dsatur, car dsatur est plus performant, donc le gain est positif si DSATUR est meilleur
+    double colorGain = 100.0 * (lfColors - dsaturColors) / lfColors;
+    // Augmentation relative du temps d'éxec entre DSATUR et LF
+    // dsatur - lf, car lf est plus rapide, donc l'augmentation est positive si DSATUR est plus lent
+    double timeIncrease = 100.0 * (dsaturMicros - lfMicros) / lfMicros;
+
+    return String.format("| %s | %d | %d | %d | %.3f | %d | %d | %.1f %% | %.1f | %.1f | %.1f %% |",
+            instance, n, m, graph.maxDegree(), density, lfColors, dsaturColors, colorGain,
+            lfMicros, dsaturMicros, timeIncrease);
   }
 
   /**
@@ -72,8 +140,10 @@ public final class Main {
       total += System.nanoTime() - start;
       colorSum += coloring.colorCount();
     }
-    // n'affiche rien si erreur
-    if (colorSum < 0) System.out.print("");
+
+    totalColors = colorSum;
+    if (totalColors < 0) System.out.println("");
+
     return (double) total / REPETITIONS / 1_000.0;
   }
 }
